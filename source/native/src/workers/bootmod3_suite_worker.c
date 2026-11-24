@@ -108,8 +108,12 @@ static int bm3_profile(control_link link) {
         unsigned char define[]={0x2c,2,0xf3,1,0x24,0,0,0,0,0,BM3_MARKER_SIZE};
         unsigned char direct[]={0x23,0x14,0,0,0,0,BM3_MARKER_SIZE};
         unsigned negative, offset=3;
-        memcpy(define+5,addresses[i],4);
-        memcpy(direct+2,addresses[i],4);
+        // Copy byte by byte: an inlined memcpy to these odd offsets becomes an unaligned
+        // word store on GCC >= 4.7, which raises SIGBUS on head units that trap it.
+        for (unsigned b=0;b<4;++b) {
+            define[5+b]=addresses[i][b];
+            direct[2+b]=addresses[i][b];
+        }
         // Defining F301 again appends data unless the previous range is cleared.
         int n=exchange(link,0x12,clear,sizeof clear,cleared,sizeof cleared,reply,sizeof reply,1600,&negative);
         if (n>=4) n=exchange(link,0x12,define,sizeof define,defined,sizeof defined,reply,sizeof reply,1600,&negative);
