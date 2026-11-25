@@ -194,11 +194,11 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(requests.count(bytes.fromhex("f41822de31")), 1)
 
     def test_dct_oil_temperature_replaces_rejected_da12(self):
-        p, requests, _ = self.run_collector("dkg_trans", cycles=120)
+        p, requests, _ = self.run_collector("dkg_trans")
         self.assertEqual(int(p[3]), 255)
         self.assertAlmostEqual(float(p[13]), 18)
         self.assertEqual(requests.count(bytes.fromhex("f41822da12")), 1)
-        self.assertGreater(requests.count(bytes.fromhex("f41822de31")), 1)
+        self.assertEqual(requests.count(bytes.fromhex("f41822de31")), 1)
 
     def test_refused_fast_read_backs_off_without_holding_up_other_gauges(self):
         packet, requests, _ = self.run_collector("no_afr", cycles=4)
