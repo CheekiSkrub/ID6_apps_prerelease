@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Read-only probe for TempDeck: which temperature and tyre readings this car answers, over wired ENET.
 
+Tyre blocks (DSC 22 DC98-DC9B) and the F32 DME temperature DIDs come from OBDb's BMW 4 Series
+signal set: https://github.com/OBDb/BMW-4-Series
+
 It only sends OBD mode 01 reads and UDS ReadDataByIdentifier (22) requests. Nothing is written to
 any ECU. Identification DIDs (F1xx, which include the VIN) are never requested.
 
@@ -49,7 +52,20 @@ DME_DIDS = {
     0x4402: ("oil temp on A90 (unknown here)", lambda d: d.hex(" ")),
     0x4650: ("gearbox temp on A90 DME (unknown here)", lambda d: d.hex(" ")),
     0x4201: ("ambient pressure kPa (raw/256)", lambda d: ((d[0] << 8) | d[1]) / 256),
+    0x582F: ("catalyst temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
+    0x4408: ("engine oil temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
+    0x5805: ("coolant temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
 }
+DSC = 0x29
+# Tyre blocks on the DSC, from OBDb's BMW 4 Series signal set (F32 generation, 2014-2020):
+# byte 4 sensor position, bytes 5-6 pressure (little-endian, signed, /1000 bar), byte 7 temperature
+# (signed C), bytes 8-9 the stored set point (little-endian, /1000 bar). Bytes count after 62 DC 9x.
+TYRES = {0xDC98: "FL", 0xDC99: "FR", 0xDC9A: "RL", 0xDC9B: "RR"}
+
+
+def tyre(d):
+    s16 = lambda lo, hi: struct.unpack("<h", bytes((lo, hi)))[0] / 1000
+    return {"pos": d[4], "bar": s16(d[5], d[6]), "C": struct.unpack("b", d[7:8])[0], "set_bar": s16(d[8], d[9])}
 
 
 class Link:
@@ -203,6 +219,10 @@ def main():
             print("Engine ECU, BMW identifiers:")
             for did, (meaning, decode) in DME_DIDS.items():
                 record(DME, bytes((0x22, did >> 8, did & 0xFF)), meaning, decode)
+
+            print("Tyres, from the DSC (pressure bar, temperature C, set point):")
+            for did, corner in TYRES.items():
+                record(DSC, bytes((0x22, did >> 8, did & 0xFF)), f"tyre {corner}", tyre)
 
             print("Gearbox (DCT) status block:")
             record(EGS, bytes((0x22, 0xDE, 0x31)), "DCT oil temp, word at byte 20 (C)",
