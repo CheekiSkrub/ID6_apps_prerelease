@@ -2,7 +2,7 @@
 """Read-only probe for TempDeck: which temperature and tyre readings this car answers, over wired ENET.
 
 Tyre blocks (DSC 22 DC98-DC9B) and the F32 DME temperature DIDs come from OBDb's BMW 4 Series
-signal set: https://github.com/OBDb/BMW-4-Series
+signal sets: https://github.com/OBDb/BMW-4-Series and https://github.com/OBDb/BMW-M4
 
 It only sends OBD mode 01 reads and UDS ReadDataByIdentifier (22) requests. Nothing is written to
 any ECU. Identification DIDs (F1xx, which include the VIN) are never requested.
@@ -49,18 +49,25 @@ DME_DIDS = {
     0x4300: ("coolant (S55 answers 1 byte: raw*0.75-48?)",
              lambda d: d[0] * 0.75 - 48 if len(d) == 1 else ((d[0] << 8) | d[1]) / 10 - 273.15),
     0x580F: ("intake air (raw*0.75-48)", lambda d: d[0] * 0.75 - 48),
-    0x4402: ("oil temp on A90 (unknown here)", lambda d: d.hex(" ")),
     0x4650: ("gearbox temp on A90 DME (unknown here)", lambda d: d.hex(" ")),
     0x4201: ("ambient pressure kPa (raw/256)", lambda d: ((d[0] << 8) | d[1]) / 256),
+    # OBDb BMW-M4 signal set, answered by a 2015 F82 M4: 4402 oil (byte 1 / 2), 4506 oil (1 byte),
+    # 4408 oil (raw/10 on 2015-2018 M4s), 4015 intake air (byte 1). 582F cat temp was refused there.
+    0x4402: ("engine oil, M4 (byte1/2)", lambda d: d[1] / 2),
+    0x4506: ("engine oil, M4 (1 byte)", lambda d: d[0]),
+    0x4408: ("engine oil, M4 2015-18 (raw/10)", lambda d: ((d[0] << 8) | d[1]) / 10),
+    0x4015: ("intake air, M4 (byte 1)", lambda d: d[1]),
     0x582F: ("catalyst temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
-    0x4408: ("engine oil temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
-    0x5805: ("coolant temp, F32 B58/N55 (raw/10-273.15)", lambda d: round(((d[0] << 8) | d[1]) / 10 - 273.15, 1)),
 }
 DSC = 0x29
 # Tyre blocks on the DSC, from OBDb's BMW 4 Series signal set (F32 generation, 2014-2020):
 # byte 4 sensor position, bytes 5-6 pressure (little-endian, signed, /1000 bar), byte 7 temperature
 # (signed C), bytes 8-9 the stored set point (little-endian, /1000 bar). Bytes count after 62 DC 9x.
 TYRES = {0xDC98: "FL", 0xDC99: "FR", 0xDC9A: "RL", 0xDC9B: "RR"}
+# Outside air: instrument cluster 60 D112 (byte/2 - 40) and climate control 78 D96B (word/2 - 40),
+# both answered by a 2015 F82 M4 in OBDb's captures.
+AMBIENT = [(0x60, 0xD112, "ambient, cluster (byte/2-40)", lambda d: d[0] / 2 - 40),
+           (0x78, 0xD96B, "ambient, climate control (word/2-40)", lambda d: struct.unpack(">h", d[:2])[0] / 2 - 40)]
 
 
 def tyre(d):
@@ -223,6 +230,10 @@ def main():
             print("Tyres, from the DSC (pressure bar, temperature C, set point):")
             for did, corner in TYRES.items():
                 record(DSC, bytes((0x22, did >> 8, did & 0xFF)), f"tyre {corner}", tyre)
+
+            print("Outside air:")
+            for ecu, did, meaning, decode in AMBIENT:
+                record(ecu, bytes((0x22, did >> 8, did & 0xFF)), meaning, decode)
 
             print("Gearbox (DCT) status block:")
             record(EGS, bytes((0x22, 0xDE, 0x31)), "DCT oil temp, word at byte 20 (C)",
